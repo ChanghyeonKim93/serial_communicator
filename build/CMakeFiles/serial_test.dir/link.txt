@@ -1,0 +1,1 @@
+/usr/bin/c++    -std=c++17 -pg -g3 -o -O2 -m64 -Ofast -flto -msse2 -msse3 -pthread -march=native -mfpmath=sse   CMakeFiles/serial_test.dir/src/main_serial.cpp.o  -o serial_test -rdynamic 
