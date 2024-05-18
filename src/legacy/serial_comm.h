@@ -29,14 +29,14 @@ class SerialCommunicator {
   };
 
   SerialCommunicator(const std::string& portname, const int& msg_len) {
-    portname_ = portname;
+    port_name_ = portname;
     MSG_LEN_ = msg_len;
     STX_ = '$';
     ETX_ = '%';
     CTX_ = '*';
 
     printf("[SerialComm] Portname is {%s}, message length: {%d}\n",
-           portname_.c_str(), MSG_LEN_);
+           port_name_.c_str(), MSG_LEN_);
   };
 
   // deconstructor
@@ -49,14 +49,14 @@ class SerialCommunicator {
  private:
   void process() {
     printf("This is Serial (RX) node.\n");
-    fd_ = open(portname_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    fd_ = open(port_name_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd_ == -1) {
       printf(
           "Error - no serial port {%s} is opened! Check the serial device.\n",
-          portname_.c_str());
+          port_name_.c_str());
       return;
     } else
-      printf("{%s} is opened.\n", portname_.c_str());
+      printf("{%s} is opened.\n", port_name_.c_str());
 
     // newtio_rx initialization.
     memset(&this->newtio_rx_, 0, sizeof(this->newtio_rx_));
@@ -174,7 +174,7 @@ class SerialCommunicator {
   };
 
  private:
-  std::string portname_;
+  std::string port_name_;
 
   int fd_;
   struct termios newtio_rx_;

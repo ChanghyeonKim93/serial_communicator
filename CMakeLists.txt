@@ -11,7 +11,6 @@ set(INCLUDE_DIR ${INCLUDE_DIR} include)
 
 set(SRC ${SRC}
   src/serial_communicator.cc
-  src/timer.cc
   src/crc16.cc
 )
 

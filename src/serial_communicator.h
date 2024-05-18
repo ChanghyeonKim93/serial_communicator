@@ -16,39 +16,49 @@
 #include <boost/asio/serial_port.hpp>
 
 #include "crc16.h"  // CRC16 checksum test
-#include "timer.h"
-#include "union_struct.h"
 
-#define DLE 0x10
-#define STX 0x02
-#define ETX 0x03
+#define DLE 0x10  // data link escape
+#define STX 0x02  // start of text
+#define ETX 0x03  // end of text
 
 class SerialCommunicator {
  public:
-  SerialCommunicator(const std::string& portname, const int baud_rate);
+  template <typename T>
+  union Union {
+    T value;
+    unsigned char bytes[sizeof(T)];
+  };
+
+  struct RxStatistics {
+    int num_total{0};
+    int num_crc_error{0};
+    int num_overflow{0};
+    int num_exception{0};
+  };
+
+  struct TxStatistics {
+    int num_total{0};
+  };
+
+ public:
+  SerialCommunicator(const std::string& port_name, const int baud_rate);
   ~SerialCommunicator();
 
   // Get packet
-  bool IsPacketReady();
-  int GetPacket(unsigned char* buffer);
+  bool IsNewPacketReceived();
+  int GetPacket(unsigned char* data);
 
   // Send packet
-  bool SendPacket(unsigned char* buffer, int len);
+  bool SendPacket(unsigned char* data, int len);
+  std::vector<unsigned char> data;
 
-  // Statistics
-  void GetRxStatistics(uint32_t& seq, uint32_t& seq_crcerr,
-                       uint32_t& seq_overflowerr, uint32_t& seq_exceptionerr);
-  void GetTxStatistics(uint32_t& seq);
-
- private:
-  void RunRxThread();
-  void RunTxThread();
-
-  void processRX(std::shared_future<void> terminate_signal);
-  void processTX(std::shared_future<void> terminate_signal);
+  RxStatistics GetRxStatistics();
+  TxStatistics GetTxStatistics();
 
  private:
-  void SetPortName(const std::string& portname);
+  void ProcessRx();
+  void ProcessTx();
+
   void SetBaudRate(const int baud_rate);
   void CheckSupportedBaudRate(const int baud_rate);
 
@@ -59,27 +69,25 @@ class SerialCommunicator {
 
  private:
   void SendPacketWithChecksum(const unsigned char* data, int len);
-
- private:
-  unsigned short stringChecksumCRC16_CCITT(const unsigned char* s,
-                                           int idx_start, int idx_end);
+  unsigned short GetChecksumCRC16CCITT(const unsigned char* data,
+                                       const int length);
 
   // Serial port related (boost::asio::serial )
  private:
-  std::string portname_;
+  std::string port_name_;
   int baud_rate_;
 
-  boost::asio::serial_port* serial_;
+  boost::asio::serial_port* serial_port_;
   boost::asio::io_service io_service_;
   boost::asio::deadline_timer timeout_;
 
-  int len_stack_;
+  int stacked_length_;
   unsigned char packet_stack_[BUF_SIZE];
 
   // Related to RX (Nucleo -> PC)
  private:
   int seq_recv_;
-  unsigned char buf_recv_[BUF_SIZE];
+  unsigned char buffer_recv_[BUF_SIZE];
 
   int len_packet_recv_;
   unsigned char packet_recv_[BUF_SIZE];
@@ -89,18 +97,16 @@ class SerialCommunicator {
   // Related to TX (PC -> Nucleo)
  private:
   int seq_send_{0};
-  unsigned char buf_send_[BUF_SIZE];
+  unsigned char buffer_send_[BUF_SIZE];
 
   int len_packet_send_{0};
   unsigned char packet_send_[BUF_SIZE];
 
-  std::atomic<bool> flag_ready_to_send_;
+  std::atomic<bool> ready_to_send_;
 
-  // For debug
  private:
-  int seq_recv_crc_error_;
-  int seq_recv_overflow_;
-  int seq_recv_exception_;
+  RxStatistics rx_stats_;
+  TxStatistics tx_stats_;
 
   // Variables to elegantly terminate TX & RX threads
  private:
@@ -109,11 +115,10 @@ class SerialCommunicator {
 
   // TX & RX threads and their mutex
  private:
-  std::thread thread_tx_;
-  std::thread thread_rx_;
-
   std::shared_ptr<std::mutex> mutex_tx_;
   std::shared_ptr<std::mutex> mutex_rx_;
+  std::thread thread_tx_;
+  std::thread thread_rx_;
 };
 
 #endif  // SERIAL_COMMUNICATOR_H_

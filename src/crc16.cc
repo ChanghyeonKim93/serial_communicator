@@ -31,13 +31,12 @@ static const unsigned short crc16_lookup_table[256] = {
     0xdf7c, 0xaf9b, 0xbfba, 0x8fd9, 0x9ff8, 0x6e17, 0x7e36, 0x4e55, 0x5e74,
     0x2e93, 0x3eb2, 0x0ed1, 0x1ef0};
 
-unsigned short CalculateChecksumCRC16CCITT(const unsigned char* buf,
-                                           int idx_start, int idx_end) {
+unsigned short CalculateChecksumCRC16CCITT(const unsigned char* data,
+                                           const int length) {
   unsigned short crc = 0;
-  int len = idx_end - idx_start + 1;
-  for (int i = 0; i < len; ++i) {
-    crc = (crc << 8) ^ crc16_lookup_table[((crc >> 8) ^ *buf) & 0x00ff];
-    ++buf;
+  for (int i = 0; i < length; ++i) {
+    crc = (crc << 8) ^ crc16_lookup_table[((crc >> 8) ^ *data) & 0x00ff];
+    ++data;
   }
   return crc;
 }
