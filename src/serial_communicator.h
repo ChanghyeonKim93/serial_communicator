@@ -23,6 +23,13 @@
 
 class SerialCommunicator {
  public:
+  struct Parameters {
+    enum class PacketType : uint8_t { kRaw = 0, kFrameWithChecksum };
+    std::string port_name;
+    int baud_rate;
+    PacketType packet_type;
+  };
+
   template <typename T>
   union Union {
     T value;
@@ -41,7 +48,7 @@ class SerialCommunicator {
   };
 
  public:
-  SerialCommunicator(const std::string& port_name, const int baud_rate);
+  SerialCommunicator(const Parameters& parameters);
   ~SerialCommunicator();
 
   // Get packet
@@ -68,14 +75,17 @@ class SerialCommunicator {
   void CloseSerialPort();
 
  private:
-  void SendPacketWithChecksum(const unsigned char* data, int len);
+  void ParseFramedPacketWithChecksum(const int received_length);
+  void ParseRawPacket(const int received_length);
+
+  void SendRawPacket(const unsigned char* data, int len);
+  void SendFramedPacketWithChecksum(const unsigned char* data, int len);
   unsigned short GetChecksumCRC16CCITT(const unsigned char* data,
                                        const int length);
 
   // Serial port related (boost::asio::serial )
  private:
-  std::string port_name_;
-  int baud_rate_;
+  const Parameters parameters_;
 
   boost::asio::serial_port* serial_port_;
   boost::asio::io_service io_service_;
