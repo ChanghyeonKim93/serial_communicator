@@ -33,5 +33,7 @@ class StopWatch {
   inline static std::chrono::high_resolution_clock::time_point ref_time_ =
       std::chrono::high_resolution_clock::now();
 };
-};  // namespace timer
+
+}  // namespace timer
+
 #endif

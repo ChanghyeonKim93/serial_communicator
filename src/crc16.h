@@ -1,5 +1,6 @@
-#ifndef _CRC16_H_
-#define _CRC16_H_
+#ifndef CRC16_H_
+#define CRC16_H_
+
 #include <stdio.h>
 #include <iostream>
 

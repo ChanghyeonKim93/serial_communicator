@@ -1,17 +1,33 @@
 #include "serial_communicator.h"
 
+#include <set>
+#include <sstream>
+#include <string>
+
+namespace {
+
+inline void PrintInfo(const std::string& str) {
+  static std::stringstream ss;
+  ss.flush();
+  ss << "[INFO]: " << str;
+  std::cerr << std::string(ss.str() + "\n");
+}
+
+}  // namespace
+
 SerialCommunicator::SerialCommunicator(const std::string& portname,
                                        const int baud_rate)
-    : seq_recv_(0),
-      seq_send_(0),
+    : io_service_(),
+      timeout_(io_service_),
+      seq_recv_(0),
       len_packet_recv_(0),
+      flag_recv_packet_ready_(false),
+      seq_send_(0),
       len_packet_send_(0),
+      flag_ready_to_send_(false),
       seq_recv_crc_error_(0),
       seq_recv_overflow_(0),
-      flag_recv_packet_ready_(false),
-      flag_ready_to_send_(false),
-      io_service_(),
-      timeout_(io_service_) {
+      seq_recv_exception_(0) {
   // initialize mutex
   mutex_rx_ = std::make_shared<std::mutex>();
   mutex_tx_ = std::make_shared<std::mutex>();
@@ -30,48 +46,45 @@ SerialCommunicator::SerialCommunicator(const std::string& portname,
   RunTxThread();
   RunRxThread();
 
-  printf("SerialCommunicator - port {%s} is open.\n", portname_.c_str());
-};
+  PrintInfo("SerialCommunicator - port [" + portname_ + "] is open.\n");
+}
 
 // deconstructor
 SerialCommunicator::~SerialCommunicator() {
   // Terminate signal .
-  std::cerr << "SerialCommunicator - terminate signal published...\n";
+  PrintInfo("SerialCommunicator - terminate signal published...");
   terminate_promise_.set_value();
 
   // wait for TX & RX threads to terminate ...
-  std::cerr
-      << "                   - waiting 1 second to join TX / RX threads ...\n";
-  std::this_thread::sleep_for(1s);
+  PrintInfo(
+      "                   - waiting 1 second to join TX / RX threads ...");
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
   if (thread_rx_.joinable()) thread_rx_.join();
-  std::cerr
-      << "                   -   RX thread joins (turns off) successfully.\n";
+  PrintInfo("                   -   RX thread joins (turns off) successfully.");
 
   if (thread_tx_.joinable()) thread_tx_.join();
-  std::cerr
-      << "                   -   TX thread joins (turns off) successfully.\n";
+  PrintInfo("                   -   TX thread joins (turns off) successfully.");
 
   // Close the serial port.
   CloseSerialPort();
-  std::cerr << "SerialCommunicator - terminated.\n";
-};
+  PrintInfo("SerialCommunicator - terminated.");
+}
 
 bool SerialCommunicator::IsPacketReady() {
   bool res = false;
-  // mutex_rx_->lock();
+  mutex_rx_->lock();
   res = flag_recv_packet_ready_;
-  // std::cout << "ready in comm? : " << flag_recv_packet_ready_ <<", " << res
-  // <<std::endl; mutex_rx_->unlock();
-  return flag_recv_packet_ready_;
-};
+  mutex_rx_->unlock();
+  return res;
+}
 
-uint32_t SerialCommunicator::GetPacket(unsigned char* buf) {
-  uint32_t len = 0;
+int SerialCommunicator::GetPacket(unsigned char* buf) {
+  int len = 0;
   mutex_rx_->lock();
   if (len_packet_recv_ > 0) {
     len = len_packet_recv_;
-    for (uint32_t i = 0; i < len; ++i) buf[i] = packet_recv_[i];
+    for (int i = 0; i < len; ++i) buf[i] = packet_recv_[i];
 
     // Initialize the flag
     len_packet_recv_ = 0;
@@ -82,21 +95,21 @@ uint32_t SerialCommunicator::GetPacket(unsigned char* buf) {
   // return len > 0 when data ready.
   // else 0.
   return len;
-};
+}
 
-bool SerialCommunicator::SendPacket(unsigned char* buf, uint32_t len) {
+bool SerialCommunicator::SendPacket(unsigned char* buf, int len) {
   bool isOK = len > 0;
 
   // update message & length
   mutex_tx_->lock();
 
   len_packet_send_ = len;
-  for (uint32_t i = 0; i < len; ++i) packet_send_[i] = buf[i];
+  for (int i = 0; i < len; ++i) packet_send_[i] = buf[i];
 
   flag_ready_to_send_ = true;  // Flag up!
   mutex_tx_->unlock();
   return isOK;
-};
+}
 
 void SerialCommunicator::GetRxStatistics(uint32_t& seq, uint32_t& seq_crcerr,
                                          uint32_t& seq_overflowerr,
@@ -105,57 +118,56 @@ void SerialCommunicator::GetRxStatistics(uint32_t& seq, uint32_t& seq_crcerr,
   seq_crcerr = seq_recv_crc_error_;
   seq_overflowerr = seq_recv_overflow_;
   seq_exceptionerr = seq_recv_exception_;
-};
+}
 
-void SerialCommunicator::GetTxStatistics(uint32_t& seq) { seq = seq_send_; };
+void SerialCommunicator::GetTxStatistics(uint32_t& seq) { seq = seq_send_; }
 
-void SerialCommunicator::SetPortName(std::string portname) {
+void SerialCommunicator::SetPortName(const std::string& portname) {
   portname_ = portname;
-};
-void SerialCommunicator::SetBaudRate(int baudrate) {
-  CheckSupportedBaudRate(baudrate);
+}
 
-  boost::asio::serial_port_base::baud_rate baud_rate_option2(baudrate);
+void SerialCommunicator::SetBaudRate(const int baud_rate) {
+  CheckSupportedBaudRate(baud_rate);
+
+  boost::asio::serial_port_base::baud_rate baud_rate_option2(baud_rate);
   serial_->set_option(baud_rate_option2);
   boost::asio::serial_port_base::baud_rate baud_rate_option3;
   serial_->get_option(baud_rate_option3);
   std::cout
       << "SerialCommunicator - baudrate is changed from 115200 (default) to "
       << baud_rate_option3.value() << std::endl;
-};
+}
 
-void SerialCommunicator::CheckSupportedBaudRate(int baud_rate) {
-  if (baud_rate == 57600 || baud_rate == 115200 || baud_rate == 230400 ||
-      baud_rate == 460800 || baud_rate == 500000 || baud_rate == 576000 ||
-      baud_rate == 921600 || baud_rate == 1000000 || baud_rate == 1152000 ||
-      baud_rate == 1500000 || baud_rate == 2000000 || baud_rate == 2500000 ||
-      baud_rate == 3000000 || baud_rate == 3500000 || baud_rate == 4000000) {
-    // OK
+void SerialCommunicator::CheckSupportedBaudRate(const int baud_rate) {
+  static std::set<int> supported_baud_rate_set{
+      57600,   115200,  230400,  460800,  500000,  576000,  921600, 1000000,
+      1152000, 1500000, 2000000, 2500000, 3000000, 3500000, 4000000};
+  if (supported_baud_rate_set.find(baud_rate) !=
+      supported_baud_rate_set.end()) {
     baud_rate_ = baud_rate;
-  } else
-    std::runtime_error("SerialCommunicator - Unsupported Baudrate...");
-};
+  } else {
+    throw std::runtime_error("SerialCommunicator - Unsupported baudrate...");
+  }
+}
 
 void SerialCommunicator::OpenSerialPort() {
-  // Generate serial port.
-  std::cout << "SerialCommunicator - opening the serial port...\n";
+  PrintInfo("SerialCommunicator - opening the serial port...");
   serial_ = new boost::asio::serial_port(io_service_);
 
   // Try to open the serial port
   try {
     serial_->open(portname_);
   } catch (boost::system::system_error& error) {
-    std::cout << "SerialCommunicator - port [" << portname_.c_str()
-              << "] cannot be opened. Error message:" << error.what()
-              << std::endl;
+    PrintInfo("SerialCommunicator - port [" + portname_ +
+              "] cannot be opened. Error message:" + error.what());
     throw std::runtime_error(error.what());
   }
 
   // If serial port cannot be opened,
   if (!serial_->is_open()) {
-    std::cout << "SerialCommunicator - [" << portname_
-              << "] is not opened. terminate the node\n";
-    throw std::runtime_error("");
+    PrintInfo("SerialCommunicator - [" + portname_ +
+              "] is not opened. terminate the node.");
+    throw std::runtime_error("terminate the node");
   }
 
   // Set serial port spec.
@@ -172,28 +184,27 @@ void SerialCommunicator::OpenSerialPort() {
   serial_->set_option(flow_control);
   serial_->set_option(parity);
   serial_->set_option(stop_bits);
-};
+}
 
 void SerialCommunicator::CloseSerialPort() {
   serial_->close();
-  std::cerr << "SerialCommunicator - portname [" << portname_
-            << "] is closed...\n";
-};
+  PrintInfo("SerialCommunicator - portname [" + portname_ + +"] is closed...");
+}
 
 void SerialCommunicator::RunRxThread() {
-  thread_rx_ = std::thread([&]() { processRX(terminate_future_); });
-};
+  thread_rx_ = std::thread([this]() { processRX(terminate_future_); });
+}
 
 void SerialCommunicator::RunTxThread() {
-  thread_tx_ = std::thread([&]() { processTX(terminate_future_); });
-};
+  thread_tx_ = std::thread([this]() { processTX(terminate_future_); });
+}
 
 void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
   // Initialize
   bool flagStacking = false;
   bool flagDLEFound = false;
 
-  std::this_thread::sleep_for(1s);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   len_stack_ = 0;
   timer::tic();
   boost::system::error_code ec;
@@ -216,7 +227,7 @@ void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
 
     if (len_read > 0) {  // There is data
       // std::cout << "get new : " << len_read << std::endl;
-      for (uint32_t i = 0; i < len_read; ++i) {
+      for (int i = 0; i < len_read; ++i) {
         unsigned char c = buf_recv_[i];
         // std::cout << "stkidx : " << len_stack_ <<", char:"<< (int)c <<
         // std::endl;
@@ -257,10 +268,8 @@ void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
                 mutex_rx_->lock();
                 len_packet_recv_ = len_stack_ - 2;
                 // std::cout << " recved contents: ";
-                for (int j = 0; j < len_packet_recv_; ++j) {
+                for (int j = 0; j < len_packet_recv_; ++j)
                   packet_recv_[j] = packet_stack_[j];
-                  // std::cout << (int)packet_recv_[j] << " ";
-                }
                 // std::cout << std::endl;
 
                 mutex_rx_->unlock();
@@ -273,9 +282,8 @@ void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
                           << ", crc: " << seq_recv_crc_error_
                           << ", ofl: " << seq_recv_overflow_
                           << ", ect:" << seq_recv_exception_ << "\n";
-                for (int j = 0; j < len_stack_; ++j) {
+                for (int j = 0; j < len_stack_; ++j)
                   std::cout << (int)packet_stack_[j] << " ";
-                }
                 std::cout << std::endl;
 
                 ++seq_recv_crc_error_;
@@ -291,13 +299,13 @@ void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
               flagDLEFound = false;
               len_stack_ = 0;
 
-              std::cout << "WARNING    ! - While stacking, DLE is found, but "
-                           "there is no ETX.\n"
-                        << std::endl;
-              std::cout << "DLE,no ETX ! seq: " << seq_recv_
-                        << ", crc: " << seq_recv_crc_error_
-                        << ", ofl: " << seq_recv_overflow_
-                        << ", ect:" << seq_recv_exception_ << "\n";
+              PrintInfo(
+                  "WARNING    ! - While stacking, DLE is found, but "
+                  "there is no ETX.");
+              PrintInfo("DLE,no ETX ! seq: " + std::to_string(seq_recv_) +
+                        ", crc: " + std::to_string(seq_recv_crc_error_) +
+                        ", ofl: " + std::to_string(seq_recv_overflow_) +
+                        ", ect:" + std::to_string(seq_recv_exception_));
             }
           } else {           // 이전에 DLE가 발견되지 않았다.
             if (c == DLE) {  // DLE발견
@@ -306,9 +314,8 @@ void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
               packet_stack_[len_stack_] = c;
               ++len_stack_;
               if (len_stack_ >= 64) {  // wierd error...
-                for (int kk = 0; kk < len_stack_; ++kk) {
+                for (int kk = 0; kk < len_stack_; ++kk)
                   std::cout << (int)packet_stack_[kk] << " ";
-                }
                 std::cout << "\n";
                 flagStacking = false;
                 flagDLEFound = false;
@@ -338,9 +345,7 @@ void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
             flagDLEFound = false;  // STX 이든 아니든...
           } else {                 //
             // std::cout << " not found STX. DLE found. \n";
-            if (c == DLE) {
-              flagDLEFound = true;
-            }
+            if (c == DLE) flagDLEFound = true;
           }
         }
       }
@@ -348,28 +353,21 @@ void SerialCommunicator::processRX(std::shared_future<void> terminate_signal) {
 
     std::future_status terminate_status =
         terminate_signal.wait_for(std::chrono::microseconds(10));
-    if (terminate_status == std::future_status::ready) {
-      break;
-    }
+    if (terminate_status == std::future_status::ready) break;
   }
-  std::cerr << "SerialCommunicator - RX thread receives termination signal.\n";
-};
+  PrintInfo("SerialCommunicator - RX thread receives termination signal.");
+}
 
 void SerialCommunicator::processTX(std::shared_future<void> terminate_signal) {
   while (true) {
     if (flag_ready_to_send_) {
-      uint32_t len_tmp = len_packet_send_;
-
       if (mutex_tx_->try_lock()) {
         flag_ready_to_send_ = false;
 
-        send_withChecksum(packet_send_, len_packet_send_);
+        SendPacketWithChecksum(packet_send_, len_packet_send_);
         len_packet_send_ = 0;
         ++seq_send_;
-
         mutex_tx_->unlock();
-        // std::cout << "                                           TX Send:" <<
-        // seq_send_ << ", len: " << len_tmp << std::endl;
       }
     }
 
@@ -380,66 +378,68 @@ void SerialCommunicator::processTX(std::shared_future<void> terminate_signal) {
       USHORT_UNION pwm;
       pwm.ushort_ = 0;
 
-      std::cout << "=============== Catch terminate signal in TX thread "
-                   "===============\n";
-      std::cout
-          << "    Send the zero signals to all PWM channels for safety.\n";
+      PrintInfo(
+          "=============== Catch terminate signal in TX thread "
+          "===============");
+      PrintInfo("    Send the zero signals to all PWM channels for safety.");
 
       mutex_tx_->lock();
       for (int i = 0; i < 8; ++i) {
         packet_send_[2 * i] = pwm.bytes_[0];
         packet_send_[2 * i + 1] = pwm.bytes_[1];
       }
-
       mutex_tx_->unlock();
 
-      std::cout << " Send zero signal ... trial 1...\n";
+      PrintInfo(" Send zero signal ... trial 1...");
       mutex_tx_->lock();
-      send_withChecksum(packet_send_, 16);
+      SendPacketWithChecksum(packet_send_, 16);
       mutex_tx_->unlock();
-
-      std::cout << " Wait 1 second...\n";
+      PrintInfo("  Wait 1 second...");
       sleep(1);
 
-      std::cout << " Send zero signal ... trial 2...\n";
+      PrintInfo(" Send zero signal ... trial 2...");
       mutex_tx_->lock();
-      send_withChecksum(packet_send_, 16);
+      SendPacketWithChecksum(packet_send_, 16);
       mutex_tx_->unlock();
 
-      std::cout << "Zero signal done.\n";
+      PrintInfo("Zero signal done.");
       break;
     }
   }
-  std::cerr << "SerialCommunicator - TX thread receives termination signal.\n";
-};
+  PrintInfo("SerialCommunicator - TX thread receives termination signal.");
+}
 
-void SerialCommunicator::send_withChecksum(const unsigned char* data, int len) {
+void SerialCommunicator::SendPacketWithChecksum(const unsigned char* data,
+                                                int len) {
   USHORT_UNION crc16_calc;
   crc16_calc.ushort_ = CalculateChecksumCRC16CCITT(data, 0, len - 1);
 
-  uint32_t idx = 2;
+  int idx = 2;
   buf_send_[0] = DLE;
   buf_send_[1] = STX;  // DLE, STX --> start of the packet
-  for (uint32_t i = 0; i < len; ++i) {
+  for (int i = 0; i < len; ++i) {
     if (data[i] == DLE) {
       buf_send_[idx++] = DLE;
       buf_send_[idx++] = DLE;
-    } else
+    } else {
       buf_send_[idx++] = data[i];
+    }
   }
 
   // len = idx - 2;
   if (crc16_calc.bytes_[0] == DLE) {
     buf_send_[idx++] = DLE;
     buf_send_[idx++] = DLE;
-  } else
+  } else {
     buf_send_[idx++] = crc16_calc.bytes_[0];
+  }
 
   if (crc16_calc.bytes_[1] == DLE) {
     buf_send_[idx++] = DLE;
     buf_send_[idx++] = DLE;
-  } else
+  } else {
     buf_send_[idx++] = crc16_calc.bytes_[1];
+  }
 
   buf_send_[idx++] = DLE;
   buf_send_[idx++] = ETX;  // DLE, ETX --> end of the packet.
@@ -452,9 +452,9 @@ void SerialCommunicator::send_withChecksum(const unsigned char* data, int len) {
   serial_->write_some(boost::asio::buffer(buf_send_, idx));
   // boost::asio::write(*serial_, boost::asio::buffer(buf_send_, idx));
   // std::cout << "write length : " << len +6 << std::endl;
-};
+}
 
 unsigned short SerialCommunicator::stringChecksumCRC16_CCITT(
     const unsigned char* s, int idx_start, int idx_end) {
   return CalculateChecksumCRC16CCITT(s, idx_start, idx_end);
-};
+}

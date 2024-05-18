@@ -1,3 +1,0 @@
-/home/larrkchlaptop/Documents/serial_communication_example/build/CMakeFiles/edit_cache.dir
-/home/larrkchlaptop/Documents/serial_communication_example/build/CMakeFiles/rebuild_cache.dir
-/home/larrkchlaptop/Documents/serial_communication_example/build/CMakeFiles/serial_test.dir

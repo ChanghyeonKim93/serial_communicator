@@ -3,7 +3,6 @@
 
 #define BUF_SIZE 1024
 
-// C++
 #include <chrono>
 #include <cstring>
 #include <exception>
@@ -13,7 +12,6 @@
 #include <string>
 #include <thread>
 
-// Boost serial
 #include <boost/asio.hpp>
 #include <boost/asio/serial_port.hpp>
 
@@ -25,8 +23,6 @@
 #define STX 0x02
 #define ETX 0x03
 
-using namespace std::chrono_literals;
-
 class SerialCommunicator {
  public:
   SerialCommunicator(const std::string& portname, const int baud_rate);
@@ -34,10 +30,10 @@ class SerialCommunicator {
 
   // Get packet
   bool IsPacketReady();
-  uint32_t GetPacket(unsigned char* buf);
+  int GetPacket(unsigned char* buffer);
 
   // Send packet
-  bool SendPacket(unsigned char* buf, uint32_t len);
+  bool SendPacket(unsigned char* buffer, int len);
 
   // Statistics
   void GetRxStatistics(uint32_t& seq, uint32_t& seq_crcerr,
@@ -52,9 +48,9 @@ class SerialCommunicator {
   void processTX(std::shared_future<void> terminate_signal);
 
  private:
-  void SetPortName(std::string portname);
-  void SetBaudRate(int baudrate);
-  void CheckSupportedBaudRate(int baud_rate);
+  void SetPortName(const std::string& portname);
+  void SetBaudRate(const int baud_rate);
+  void CheckSupportedBaudRate(const int baud_rate);
 
   // Port settings
  private:
@@ -62,7 +58,7 @@ class SerialCommunicator {
   void CloseSerialPort();
 
  private:
-  void send_withChecksum(const unsigned char* data, int len);
+  void SendPacketWithChecksum(const unsigned char* data, int len);
 
  private:
   unsigned short stringChecksumCRC16_CCITT(const unsigned char* s,
@@ -77,34 +73,34 @@ class SerialCommunicator {
   boost::asio::io_service io_service_;
   boost::asio::deadline_timer timeout_;
 
-  uint32_t len_stack_;
+  int len_stack_;
   unsigned char packet_stack_[BUF_SIZE];
 
   // Related to RX (Nucleo -> PC)
  private:
-  uint32_t seq_recv_;
+  int seq_recv_;
   unsigned char buf_recv_[BUF_SIZE];
 
-  uint32_t len_packet_recv_;
+  int len_packet_recv_;
   unsigned char packet_recv_[BUF_SIZE];
 
   std::atomic<bool> flag_recv_packet_ready_;
 
   // Related to TX (PC -> Nucleo)
  private:
-  uint32_t seq_send_;
+  int seq_send_{0};
   unsigned char buf_send_[BUF_SIZE];
 
-  uint32_t len_packet_send_;
+  int len_packet_send_{0};
   unsigned char packet_send_[BUF_SIZE];
 
   std::atomic<bool> flag_ready_to_send_;
 
   // For debug
  private:
-  uint32_t seq_recv_crc_error_;
-  uint32_t seq_recv_overflow_;
-  uint32_t seq_recv_exception_;
+  int seq_recv_crc_error_;
+  int seq_recv_overflow_;
+  int seq_recv_exception_;
 
   // Variables to elegantly terminate TX & RX threads
  private:

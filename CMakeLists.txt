@@ -1,17 +1,21 @@
-cmake_minimum_required(VERSION 2.8.3)
-project(serial_test)
-find_package(cmake_modules)
+cmake_minimum_required(VERSION 3.16.0)
+project(serial_communicator)
 
-set(includeDirs ${includeDirs} ${CMAKE_CURRENT_BINARY_DIR})
-set(includeDirs ${includeDirs} include)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O2 -pthread")
+set(CMAKE_BUILD_TYPE Release)
 
-set(SRC ${SRC})
+add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
-include_directories( ${includeDirs} )
+set(INCLUDE_DIR ${INCLUDE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+set(INCLUDE_DIR ${INCLUDE_DIR} include)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
-set(DCMAKE_build_type debug)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg -g3 -o -O2 -m64 -Ofast -flto -msse2 -msse3 -pthread -march=native -mfpmath=sse")
+set(SRC ${SRC}
+  src/serial_communicator.cc
+  src/timer.cc
+  src/crc16.cc
+)
 
-add_executable (serial_test src/main_serial.cpp )
+include_directories( ${INCLUDE_DIR} )
+
+add_executable(serial_communicator src/main.cc ${SRC})
 

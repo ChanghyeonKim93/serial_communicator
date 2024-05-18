@@ -34,12 +34,10 @@ static const unsigned short crc16_lookup_table[256] = {
 unsigned short CalculateChecksumCRC16CCITT(const unsigned char* buf,
                                            int idx_start, int idx_end) {
   unsigned short crc = 0;
-  const unsigned char* ptr = buf + idx_start;
-
-  uint32_t len = idx_end - idx_start + 1;
-  for (uint32_t i = 0; i < len; ++i) {
+  int len = idx_end - idx_start + 1;
+  for (int i = 0; i < len; ++i) {
     crc = (crc << 8) ^ crc16_lookup_table[((crc >> 8) ^ *buf) & 0x00ff];
     ++buf;
   }
   return crc;
-};
+}
