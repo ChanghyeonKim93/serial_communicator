@@ -9,6 +9,7 @@
 #include <future>
 #include <iostream>
 #include <numeric>
+#include <queue>
 #include <string>
 #include <thread>
 
@@ -54,10 +55,11 @@ class SerialCommunicator {
   // Get packet
   bool IsNewPacketReceived();
   int GetPacket(unsigned char* data);
+  std::string GetRawPacket();
 
   // Send packet
-  bool SendPacket(unsigned char* data, int len);
-  std::vector<unsigned char> data;
+  bool SendPacket(const std::string& data);
+  bool SendPacket(const unsigned char* data, int len);
 
   RxStatistics GetRxStatistics();
   TxStatistics GetTxStatistics();
@@ -69,14 +71,12 @@ class SerialCommunicator {
   void SetBaudRate(const int baud_rate);
   void CheckSupportedBaudRate(const int baud_rate);
 
-  // Port settings
  private:
   void OpenSerialPort();
   void CloseSerialPort();
 
- private:
-  void ParseFramedPacketWithChecksum(const int received_length);
   void ParseRawPacket(const int received_length);
+  void ParseFramedPacketWithChecksum(const int received_length);
 
   void SendRawPacket(const unsigned char* data, int len);
   void SendFramedPacketWithChecksum(const unsigned char* data, int len);
@@ -103,6 +103,9 @@ class SerialCommunicator {
   unsigned char packet_recv_[BUF_SIZE];
 
   std::atomic<bool> flag_recv_packet_ready_;
+
+  std::mutex mutex_for_raw_data_queue_;
+  std::queue<unsigned char> raw_data_queue_;
 
   // Related to TX (PC -> Nucleo)
  private:

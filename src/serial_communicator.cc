@@ -87,10 +87,36 @@ int SerialCommunicator::GetPacket(unsigned char* data) {
   return len;
 }
 
-bool SerialCommunicator::SendPacket(unsigned char* data, int length) {
+std::string SerialCommunicator::GetRawPacket() {
+  static std::stringstream ss;
+  ss.str("");
+  mutex_for_raw_data_queue_.lock();
+  while (!raw_data_queue_.empty()) {
+    ss << raw_data_queue_.front();
+    raw_data_queue_.pop();
+  }
+  mutex_for_raw_data_queue_.unlock();
+
+  return ss.str();
+}
+
+bool SerialCommunicator::SendPacket(const std::string& data) {
+  const size_t length = data.size();
   if (length == 0) return false;
 
   // update message & length
+  mutex_tx_->lock();
+  len_packet_send_ = length;
+  for (size_t i = 0; i < length; ++i)
+    packet_send_[i] = static_cast<unsigned char>(data[i]);
+  ready_to_send_ = true;  // Flag up!
+  mutex_tx_->unlock();
+  return true;
+}
+
+bool SerialCommunicator::SendPacket(const unsigned char* data, int length) {
+  if (length == 0) return false;
+
   mutex_tx_->lock();
   len_packet_send_ = length;
   for (int i = 0; i < length; ++i) packet_send_[i] = data[i];
@@ -169,6 +195,20 @@ void SerialCommunicator::CloseSerialPort() {
   serial_port_->close();
   PrintInfo("SerialCommunicator - portname [" + parameters_.port_name +
             +"] is closed...");
+}
+
+void SerialCommunicator::ParseRawPacket(const int received_length) {
+  if (received_length > 0) {
+    mutex_for_raw_data_queue_.lock();
+    for (int i = 0; i < received_length; ++i)
+      raw_data_queue_.push(buffer_recv_[i]);
+    mutex_for_raw_data_queue_.unlock();
+  }
+
+  static constexpr size_t kMaxQueueSize = 2048;
+  mutex_for_raw_data_queue_.lock();
+  while (raw_data_queue_.size() > kMaxQueueSize) raw_data_queue_.pop();
+  mutex_for_raw_data_queue_.unlock();
 }
 
 void SerialCommunicator::ParseFramedPacketWithChecksum(
@@ -293,7 +333,7 @@ void SerialCommunicator::ProcessRx() {
 
     switch (parameters_.packet_type) {
       case Parameters::PacketType::kRaw: {
-        PrintWarn("No function is implemented to receive raw message.");
+        ParseRawPacket(received_length);
       } break;
       case Parameters::PacketType::kFrameWithChecksum: {
         ParseFramedPacketWithChecksum(received_length);
