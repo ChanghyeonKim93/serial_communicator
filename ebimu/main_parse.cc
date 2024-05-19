@@ -83,6 +83,7 @@ class EbimuParser {
   ~EbimuParser() {}
 
   void AppendRawMessage(const std::string& str) {
+    static std::stringstream ss;
     static bool is_stx_found = false;
     for (const auto& c : str) {
       if (c == '*') {
@@ -150,8 +151,6 @@ class EbimuParser {
   }
 
  private:
-  std::stringstream ss;
-
   std::deque<ImuData> imu_data_queue_;
 };
 
