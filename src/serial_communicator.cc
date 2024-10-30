@@ -75,14 +75,13 @@ bool SerialCommunicator::IsNewPacketReceived() {
 
 int SerialCommunicator::GetPacket(unsigned char* data) {
   int len = 0;
-  mutex_rx_->lock();
+  std::lock_guard<std::mutex> local_lock(*mutex_rx_);
   if (len_packet_recv_ > 0) {
     len = len_packet_recv_;
     for (int i = 0; i < len; ++i) data[i] = packet_recv_[i];
     len_packet_recv_ = 0;
     flag_recv_packet_ready_ = false;
   }
-  mutex_rx_->unlock();
 
   return len;
 }
@@ -90,13 +89,11 @@ int SerialCommunicator::GetPacket(unsigned char* data) {
 std::string SerialCommunicator::GetRawPacket() {
   static std::stringstream ss;
   ss.str("");
-  mutex_for_raw_data_queue_.lock();
+  std::lock_guard<std::mutex> local_lock(mutex_for_raw_data_queue_);
   while (!raw_data_queue_.empty()) {
     ss << raw_data_queue_.front();
     raw_data_queue_.pop();
   }
-  mutex_for_raw_data_queue_.unlock();
-
   return ss.str();
 }
 
@@ -105,23 +102,21 @@ bool SerialCommunicator::SendPacket(const std::string& data) {
   if (length == 0) return false;
 
   // update message & length
-  mutex_tx_->lock();
+  std::lock_guard<std::mutex> local_lock(*mutex_tx_);
   len_packet_send_ = length;
   for (size_t i = 0; i < length; ++i)
     packet_send_[i] = static_cast<unsigned char>(data[i]);
   ready_to_send_ = true;  // Flag up!
-  mutex_tx_->unlock();
   return true;
 }
 
 bool SerialCommunicator::SendPacket(const unsigned char* data, int length) {
   if (length == 0) return false;
 
-  mutex_tx_->lock();
+  std::lock_guard<std::mutex> local_lock(*mutex_tx_);
   len_packet_send_ = length;
   for (int i = 0; i < length; ++i) packet_send_[i] = data[i];
   ready_to_send_ = true;  // Flag up!
-  mutex_tx_->unlock();
   return true;
 }
 
@@ -176,15 +171,11 @@ void SerialCommunicator::OpenSerialPort() {
 
   // Set serial port spec.
   // No flow control, 8bit / no parity / stop bit 1
-  boost::asio::serial_port_base::baud_rate baud_rate_option(
-      parameters_.baud_rate);
-  boost::asio::serial_port_base::flow_control flow_control(
-      boost::asio::serial_port_base::flow_control::none);
-  boost::asio::serial_port_base::parity parity(
-      boost::asio::serial_port_base::parity::none);
-  boost::asio::serial_port_base::stop_bits stop_bits(
-      boost::asio::serial_port_base::stop_bits::one);
-
+  using SerialBase = boost::asio::serial_port_base;
+  SerialBase::baud_rate baud_rate_option(parameters_.baud_rate);
+  SerialBase::flow_control flow_control(SerialBase::flow_control::none);
+  SerialBase::parity parity(SerialBase::parity::none);
+  SerialBase::stop_bits stop_bits(SerialBase::stop_bits::one);
   serial_port_->set_option(baud_rate_option);
   serial_port_->set_option(flow_control);
   serial_port_->set_option(parity);
@@ -199,55 +190,50 @@ void SerialCommunicator::CloseSerialPort() {
 
 void SerialCommunicator::ParseRawPacket(const int received_length) {
   if (received_length > 0) {
-    mutex_for_raw_data_queue_.lock();
+    std::lock_guard<std::mutex> local_lock(mutex_for_raw_data_queue_);
     for (int i = 0; i < received_length; ++i)
       raw_data_queue_.push(buffer_recv_[i]);
-    mutex_for_raw_data_queue_.unlock();
   }
 
-  static constexpr size_t kMaxQueueSize = 2048;
-  mutex_for_raw_data_queue_.lock();
+  static constexpr size_t kMaxQueueSize{10000};
+  std::lock_guard<std::mutex> local_lock(mutex_for_raw_data_queue_);
   while (raw_data_queue_.size() > kMaxQueueSize) raw_data_queue_.pop();
-  mutex_for_raw_data_queue_.unlock();
 }
 
 void SerialCommunicator::ParseFramedPacketWithChecksum(
     const int received_length) {
-  bool do_stack = false;
+  bool is_stacking = false;
   bool is_DLE_found = false;
   if (received_length > 0) {  // There is data
     for (int i = 0; i < received_length; ++i) {
       unsigned char c = buffer_recv_[i];
-      if (do_stack) {        // 현재 Packet stack 중...
+      if (is_stacking) {     // 현재 Packet stack 중...
         if (is_DLE_found) {  // 1) DLE+DLE / 2) DLE+ETX
-          if (c == DLE) {    // 1) DLE+DLE --> 실제데이터가 DLE
-            is_DLE_found = false;
-
-            packet_stack_[stacked_length_] = c;
-            ++stacked_length_;
+          is_DLE_found = false;
+          if (c == DLE) {  // 1) DLE+DLE --> 실제데이터가 DLE
+            packet_stack_[index_++] = c;
           } else if (c == ETX) {  // 2) DLE+ETX
-            do_stack = false;
-            is_DLE_found = false;
+            is_stacking = false;
 
             bool is_packet_valid = true;
 
             // Check CRC16-CCITT
             if (parameters_.packet_type ==
                 Parameters::PacketType::kFrameWithChecksum) {
-              Union<unsigned short> crc16_calc;
-              crc16_calc.value =
-                  GetChecksumCRC16CCITT(packet_stack_, stacked_length_ - 2);
-              Union<unsigned short> crc16_recv;
-              crc16_recv.bytes[0] = packet_stack_[stacked_length_ - 2];
-              crc16_recv.bytes[1] = packet_stack_[stacked_length_ - 1];
-              is_packet_valid = crc16_calc.value == crc16_recv.value;
+              const int length = index_ - 2;
+              Union<unsigned short> computed_crc;
+              computed_crc.value = GetChecksumCRC16CCITT(packet_stack_, length);
+              Union<unsigned short> expected_crc;
+              expected_crc.bytes[0] = packet_stack_[length + 1];
+              expected_crc.bytes[1] = packet_stack_[length + 2];
+              is_packet_valid = computed_crc.value == expected_crc.value;
             }
 
             if (is_packet_valid) {
               ++seq_recv_;
               // Packet END. Copy the packet.
               mutex_rx_->lock();
-              len_packet_recv_ = stacked_length_;
+              len_packet_recv_ = index_;
               if (parameters_.packet_type ==
                   Parameters::PacketType::kFrameWithChecksum)
                 len_packet_recv_ -= 2;
@@ -264,12 +250,11 @@ void SerialCommunicator::ParseFramedPacketWithChecksum(
               len_packet_recv_ = 0;
               flag_recv_packet_ready_ = false;
             }
-            stacked_length_ = 0;
+            index_ = 0;
           } else {
             ++rx_stats_.num_exception;
-            do_stack = false;
-            is_DLE_found = false;
-            stacked_length_ = 0;
+            is_stacking = false;
+            index_ = 0;
             PrintWarn(" - Exception ! DLE but no ETX! seq: " +
                       std::to_string(seq_recv_) +
                       ", crc: " + std::to_string(rx_stats_.num_crc_error) +
@@ -280,14 +265,11 @@ void SerialCommunicator::ParseFramedPacketWithChecksum(
           if (c == DLE) {  // DLE발견
             is_DLE_found = true;
           } else {  //
-            packet_stack_[stacked_length_++] = c;
-            if (stacked_length_ >= 256) {  // wierd error...
-              for (int kk = 0; kk < stacked_length_; ++kk)
-                std::cout << (int)packet_stack_[kk] << " ";
-              std::cout << "\n";
-              do_stack = false;
+            packet_stack_[index_++] = c;
+            if (index_ >= 256) {  // wierd error...
+              is_stacking = false;
               is_DLE_found = false;
-              stacked_length_ = 0;
+              index_ = 0;
               ++rx_stats_.num_overflow;
               PrintWarn(
                   " - RX STACK OVERFLOW   ! seq: " + std::to_string(seq_recv_) +
@@ -300,8 +282,8 @@ void SerialCommunicator::ParseFramedPacketWithChecksum(
       } else {  // 아직 STX를 발견하지 못함. (Stack 하지않음)
         if (is_DLE_found) {  // 이전에 DLE나옴.
           if (c == STX) {    // STX 찾음, 새로운 packet을 stack 시작함.
-            do_stack = true;
-            stacked_length_ = 0;
+            is_stacking = true;
+            index_ = 0;
           }
           is_DLE_found = false;
         } else {
@@ -315,21 +297,20 @@ void SerialCommunicator::ParseFramedPacketWithChecksum(
 void SerialCommunicator::ProcessRx() {
   // Initialize
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-  stacked_length_ = 0;
+  index_ = 0;
   boost::system::error_code error_code;
   while (true) {
     // Try to read serial port
     const int received_length = serial_port_->read_some(
-        boost::asio::buffer(buffer_recv_, BUF_SIZE), error_code);
-    if (error_code == boost::system::errc::interrupted) {
+        boost::asio::buffer(buffer_recv_, kBufferSize), error_code);
+    if (error_code == boost::system::errc::interrupted)
       continue;  // error code 4. Interrupted
-    } else if (error_code == boost::system::errc::no_such_file_or_directory) {
+    else if (error_code == boost::system::errc::no_such_file_or_directory)
       PrintWarn(" - serial port might be disconnected. error code : " +
                 std::to_string(error_code.value()));
-    } else if (error_code) {  // Error code can be found in boost::system::errc.
+    else if (error_code)  // Error code can be found in boost::system::errc.
       PrintWarn(" - serial_->read_some(): error code : " +
                 std::to_string(error_code.value()));
-    }
 
     switch (parameters_.packet_type) {
       case Parameters::PacketType::kRaw: {
@@ -383,39 +364,27 @@ void SerialCommunicator::SendRawPacket(const unsigned char* data, int len) {
 
 void SerialCommunicator::SendFramedPacketWithChecksum(const unsigned char* data,
                                                       int len) {
-  Union<unsigned short> crc16_calc;
-  crc16_calc.value = CalculateChecksumCRC16CCITT(data, len);
+  Union<unsigned short> computed_crc;
+  computed_crc.value = CalculateChecksumCRC16CCITT(data, len);
 
-  int idx = 2;
+  int index = 2;
   buffer_send_[0] = DLE;
   buffer_send_[1] = STX;  // DLE, STX --> start of the packet
   for (int i = 0; i < len; ++i) {
-    if (data[i] == DLE) {
-      buffer_send_[idx++] = DLE;
-      buffer_send_[idx++] = DLE;
-    } else {
-      buffer_send_[idx++] = data[i];
-    }
+    if (data[i] == DLE) buffer_send_[index++] = DLE;
+    buffer_send_[index++] = data[i];
   }
 
   // len = idx - 2;
-  if (crc16_calc.bytes[0] == DLE) {
-    buffer_send_[idx++] = DLE;
-    buffer_send_[idx++] = DLE;
-  } else {
-    buffer_send_[idx++] = crc16_calc.bytes[0];
-  }
+  if (computed_crc.bytes[0] == DLE) buffer_send_[index++] = DLE;
+  buffer_send_[index++] = computed_crc.bytes[0];
 
-  if (crc16_calc.bytes[1] == DLE) {
-    buffer_send_[idx++] = DLE;
-    buffer_send_[idx++] = DLE;
-  } else {
-    buffer_send_[idx++] = crc16_calc.bytes[1];
-  }
-  buffer_send_[idx++] = DLE;
-  buffer_send_[idx++] = ETX;  // DLE, ETX --> end of the packet.
+  if (computed_crc.bytes[1] == DLE) buffer_send_[index++] = DLE;
+  buffer_send_[index++] = computed_crc.bytes[1];
+  buffer_send_[index++] = DLE;
+  buffer_send_[index++] = ETX;  // DLE, ETX --> end of the packet.
 
-  serial_port_->write_some(boost::asio::buffer(buffer_send_, idx));
+  serial_port_->write_some(boost::asio::buffer(buffer_send_, index));
 }
 
 unsigned short SerialCommunicator::GetChecksumCRC16CCITT(

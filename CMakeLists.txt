@@ -22,7 +22,7 @@ include_directories( ${INCLUDE_DIR} )
 
 add_executable(serial_communicator src/main.cc ${SRC})
 
-add_executable(get_ebimu ebimu/main_parse.cc ${SRC})
-target_link_libraries(get_ebimu ${Eigen3_LIBRARIES} )
+# add_executable(get_ebimu ebimu/main_parse.cc ${SRC})
+# target_link_libraries(get_ebimu ${Eigen3_LIBRARIES} )
 
 

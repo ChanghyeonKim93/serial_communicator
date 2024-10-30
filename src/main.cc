@@ -2,16 +2,23 @@
 
 int main() {
   SerialCommunicator::Parameters parameters;
+  parameters.port_name = "/dev/ttyUSB0";
+  parameters.baud_rate = 460800;
+  parameters.packet_type = SerialCommunicator::Parameters::PacketType::kRaw;
   // parameters.port_name = "/dev/ttyACM0";
   // parameters.baud_rate = 921600;
   // parameters.packet_type =
   //     SerialCommunicator::Parameters::PacketType::kFrameWithChecksum;
 
-  parameters.port_name = "/dev/ttyUSB0";
-  parameters.baud_rate = 460800;
-  parameters.packet_type = SerialCommunicator::Parameters::PacketType::kRaw;
-  SerialCommunicator serial_comm(parameters);
+  try {
+    SerialCommunicator serial_comm(parameters);
 
+    while (true) {
+      sleep(1);
+    }
+  } catch (std::exception& e) {
+    std::cerr << "ERROR!: " << e.what() << std::endl;
+  }
   // int delay_in_us = 1000000;
   // std::string message;
   // message = "<sb7>"; // 460800
@@ -70,8 +77,5 @@ int main() {
   // serial_comm.SendPacket(message);
   // usleep(delay_in_us);
 
-  while (true) {
-    sleep(1);
-  }
   return 0;
 }

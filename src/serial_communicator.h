@@ -1,7 +1,7 @@
 #ifndef SERIAL_COMMUNICATOR_H_
 #define SERIAL_COMMUNICATOR_H_
 
-#define BUF_SIZE 1024
+#define kBufferSize 1024
 
 #include <chrono>
 #include <cstring>
@@ -91,16 +91,16 @@ class SerialCommunicator {
   boost::asio::io_service io_service_;
   boost::asio::deadline_timer timeout_;
 
-  int stacked_length_;
-  unsigned char packet_stack_[BUF_SIZE];
+  int index_;
+  unsigned char packet_stack_[kBufferSize];
 
   // Related to RX (Nucleo -> PC)
  private:
   int seq_recv_;
-  unsigned char buffer_recv_[BUF_SIZE];
+  unsigned char buffer_recv_[kBufferSize];
 
   int len_packet_recv_;
-  unsigned char packet_recv_[BUF_SIZE];
+  unsigned char packet_recv_[kBufferSize];
 
   std::atomic<bool> flag_recv_packet_ready_;
 
@@ -110,10 +110,10 @@ class SerialCommunicator {
   // Related to TX (PC -> Nucleo)
  private:
   int seq_send_{0};
-  unsigned char buffer_send_[BUF_SIZE];
+  unsigned char buffer_send_[kBufferSize];
 
   int len_packet_send_{0};
-  unsigned char packet_send_[BUF_SIZE];
+  unsigned char packet_send_[kBufferSize];
 
   std::atomic<bool> ready_to_send_;
 
